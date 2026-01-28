@@ -1,52 +1,90 @@
 # sphp
-Switching php version for M1/Intel MACs
 
-# Usage: 
-$ sphp **phpversion**, e.g.:
+A shell script for switching between Brew-installed PHP versions on macOS.
+
+**Version:** 2.0.0
+
+## Usage
+
 ```
-sphp 7.4
+sphp <version> [options]
 ```
-# Before switching 
-## Install XCode components (required)
+
+### Examples
+
+```bash
+sphp 8.3              # Switch to PHP 8.3
+sphp 8.2 --skip-apache   # Switch PHP without Apache changes
+sphp 8.1 --dry-run    # Preview switch to PHP 8.1
+sphp --list           # List installed PHP versions
+sphp --current        # Show current PHP version
 ```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-s, --skip-apache` | Skip Apache configuration changes |
+| `-n, --dry-run` | Show what would be done without making changes |
+| `-v, --verbose` | Enable verbose output |
+| `-l, --list` | List installed PHP versions and exit |
+| `-c, --current` | Show current PHP version and exit |
+| `-h, --help` | Show help message |
+
+### Supported PHP Versions
+
+5.6, 7.0, 7.1, 7.2, 7.3, 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5
+
+## Prerequisites
+
+### Install Xcode Command Line Tools (required)
+
+```bash
 xcode-select --install
 ```
 
-## Install HomeBrew
+### Install Homebrew
 
-```
+```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
 ```
 
-## Change standard Apache to Homebrew one
-```
+### Replace macOS Apache with Homebrew Apache
+
+Stop and disable the built-in Apache:
+
+```bash
 sudo apachectl stop
 sudo launchctl unload -w /System/Library/LaunchDaemons/org.apache.httpd.plist 2>/dev/null
-````
-and install HomeBrew Apache version
 ```
+
+Install Homebrew Apache:
+
+```bash
 brew install httpd
 ```
-test installation: open http://localhost:8080 in browser.
 
-To restart Apache:
-```
-brew services restart apache
-```
-Other control options (start/stop):
-```
-brew services stop httpd
+Test installation by opening http://localhost:8080 in your browser.
+
+Apache control commands:
+
+```bash
 brew services start httpd
+brew services stop httpd
+brew services restart httpd
 ```
 
-## php install replacement
-You  need to install php-fpm version to replace too slow standard php 7.3 installation which called by Apple "deprecated"
-At first, add repository
-```
+### Install PHP Versions
+
+Add the PHP repository:
+
+```bash
 brew tap shivammathur/php
 ```
-and install all php versions:
-```
+
+Install the PHP versions you need:
+
+```bash
 brew install shivammathur/php/php@5.6
 brew install shivammathur/php/php@7.0
 brew install shivammathur/php/php@7.1
@@ -57,70 +95,73 @@ brew install shivammathur/php/php@8.0
 brew install shivammathur/php/php@8.1
 brew install shivammathur/php/php@8.2
 brew install shivammathur/php/php@8.3
-```
-You need to know that 5.6-7.2 versions are deprecated and may cause some errors, but they are need to launch old sites.
-
-ini files are located at:
-### Fof intel Macs:
-```
-/usr/local/etc/php/5.6/php.ini
-/usr/local/etc/php/7.0/php.ini
-/usr/local/etc/php/7.1/php.ini
-/usr/local/etc/php/7.2/php.ini
-/usr/local/etc/php/7.3/php.ini
-/usr/local/etc/php/7.4/php.ini
-/usr/local/etc/php/8.0/php.ini
-/usr/local/etc/php/8.1/php.ini
-/usr/local/etc/php/8.2/php.ini
-/usr/local/etc/php/8.3/php.ini
-```
-### For Silicon M1 Macs:
-```
-/opt/Homebrew/etc/php/5.6/php.ini
-/opt/Homebrew/etc/php/7.0/php.ini
-/opt/Homebrew/etc/php/7.1/php.ini
-/opt/Homebrew/etc/php/7.2/php.ini
-/opt/Homebrew/etc/php/7.3/php.ini
-/opt/Homebrew/etc/php/7.4/php.ini
-/opt/Homebrew/etc/php/8.0/php.ini
-/opt/Homebrew/etc/php/8.1/php.ini
-/opt/Homebrew/etc/php/8.2/php.ini
-/opt/Homebrew/etc/php/8.3/php.ini
-```
-# Apache PHP Setup
-You need add modules to httpd.conf after LoadModule rewrite_module lib/httpd/modules/mod_rewrite.so
-
-## For Intel Macs 
-(php7.4 as a standard)
-```
-#LoadModule php5_module /usr/local/opt/php@5.6/lib/httpd/modules/libphp5.so
-#LoadModule php7_module /usr/local/opt/php@7.0/lib/httpd/modules/libphp7.so
-#LoadModule php7_module /usr/local/opt/php@7.1/lib/httpd/modules/libphp7.so
-#LoadModule php7_module /usr/local/opt/php@7.2/lib/httpd/modules/libphp7.so
-#LoadModule php7_module /usr/local/opt/php@7.3/lib/httpd/modules/libphp7.so
-LoadModule php7_module /usr/local/opt/php@7.4/lib/httpd/modules/libphp7.so
-#LoadModule php_module /usr/local/opt/php@8.0/lib/httpd/modules/libphp.so
+brew install shivammathur/php/php@8.4
+brew install shivammathur/php/php@8.5
 ```
 
-## For Silicon M1 Macs
-```
+> **Note:** PHP versions 5.6-7.2 are deprecated and may cause errors, but are useful for legacy projects.
+
+### PHP Configuration Files
+
+PHP ini files are located at `$(brew --prefix)/etc/php/<version>/php.ini`:
+
+**Apple Silicon (M1/M2/M3):** `/opt/homebrew/etc/php/<version>/php.ini`
+
+**Intel Macs:** `/usr/local/etc/php/<version>/php.ini`
+
+## Apache PHP Setup
+
+Add PHP modules to `httpd.conf` after `LoadModule rewrite_module lib/httpd/modules/mod_rewrite.so`.
+
+The script will automatically manage these entries, but for initial setup:
+
+### Apple Silicon (M1/M2/M3)
+
+```apache
 #LoadModule php5_module /opt/homebrew/opt/php@5.6/lib/httpd/modules/libphp5.so
 #LoadModule php7_module /opt/homebrew/opt/php@7.0/lib/httpd/modules/libphp7.so
 #LoadModule php7_module /opt/homebrew/opt/php@7.1/lib/httpd/modules/libphp7.so
 #LoadModule php7_module /opt/homebrew/opt/php@7.2/lib/httpd/modules/libphp7.so
 #LoadModule php7_module /opt/homebrew/opt/php@7.3/lib/httpd/modules/libphp7.so
-LoadModule php7_module /opt/homebrew/opt/php@7.4/lib/httpd/modules/libphp7.so
-#LoadModule php_module /opt/homebrew/opt/php/lib/httpd/modules/libphp.so
+#LoadModule php7_module /opt/homebrew/opt/php@7.4/lib/httpd/modules/libphp7.so
+#LoadModule php_module /opt/homebrew/opt/php@8.0/lib/httpd/modules/libphp.so
+#LoadModule php_module /opt/homebrew/opt/php@8.1/lib/httpd/modules/libphp.so
+#LoadModule php_module /opt/homebrew/opt/php@8.2/lib/httpd/modules/libphp.so
+LoadModule php_module /opt/homebrew/opt/php@8.3/lib/httpd/modules/libphp.so
+#LoadModule php_module /opt/homebrew/opt/php@8.4/lib/httpd/modules/libphp.so
+#LoadModule php_module /opt/homebrew/opt/php@8.5/lib/httpd/modules/libphp.so
 ```
 
-Search for the block
+### Intel Macs
+
+```apache
+#LoadModule php5_module /usr/local/opt/php@5.6/lib/httpd/modules/libphp5.so
+#LoadModule php7_module /usr/local/opt/php@7.0/lib/httpd/modules/libphp7.so
+#LoadModule php7_module /usr/local/opt/php@7.1/lib/httpd/modules/libphp7.so
+#LoadModule php7_module /usr/local/opt/php@7.2/lib/httpd/modules/libphp7.so
+#LoadModule php7_module /usr/local/opt/php@7.3/lib/httpd/modules/libphp7.so
+#LoadModule php7_module /usr/local/opt/php@7.4/lib/httpd/modules/libphp7.so
+#LoadModule php_module /usr/local/opt/php@8.0/lib/httpd/modules/libphp.so
+#LoadModule php_module /usr/local/opt/php@8.1/lib/httpd/modules/libphp.so
+#LoadModule php_module /usr/local/opt/php@8.2/lib/httpd/modules/libphp.so
+LoadModule php_module /usr/local/opt/php@8.3/lib/httpd/modules/libphp.so
+#LoadModule php_module /usr/local/opt/php@8.4/lib/httpd/modules/libphp.so
+#LoadModule php_module /usr/local/opt/php@8.5/lib/httpd/modules/libphp.so
 ```
+
+### Configure DirectoryIndex
+
+Find this block in `httpd.conf`:
+
+```apache
 <IfModule dir_module>
     DirectoryIndex index.html
 </IfModule>
 ```
-and replace it with 
-```
+
+Replace it with:
+
+```apache
 <IfModule dir_module>
     DirectoryIndex index.php index.html
 </IfModule>
@@ -130,38 +171,39 @@ and replace it with
 </FilesMatch>
 ```
 
-# Downloading and activating the script
-## For Silicon M1 Macs
-```
-curl -L https://raw.githubusercontent.com/vadimbk/sphp/main/sphp > /opt/homebrew/bin/sphp
-chmod +x /opt/homebrew/bin/sphp
-```
-## For Intel Macs
-```
-curl -L https://raw.githubusercontent.com/vadimbk/sphp/main/sphp >  /usr/local/bin/sphp
-chmod +x /usr/local/bin/sphp
+## Installation
+
+Download and install the script to your Homebrew bin directory:
+
+```bash
+curl -L https://raw.githubusercontent.com/rhukster/sphp.sh/main/sphp > "$(brew --prefix)/bin/sphp"
+chmod +x "$(brew --prefix)/bin/sphp"
 ```
 
-# Testing
-Add info.php to Apache root directory
-## For Silicon M1 Macs
-```
-printf "<?php\nphpinfo();\n?>" > /opt/homebrew/var/www/info.php
-```
-## For Intel Macs
-```
-printf "<?php\nphpinfo();\n?>" > /usr/loca/var/www/info.php
+## Testing
+
+Create a test PHP file in Apache's document root:
+
+```bash
+printf "<?php\nphpinfo();\n?>" > "$(brew --prefix)/var/www/info.php"
 ```
 
-And run the test - open in browser
-```
-http://localhost:8080/info.php 
-```
-You should see an phpinfo() page
+Open http://localhost:8080/info.php in your browser. You should see a phpinfo() page.
 
-**Changing a version and re-test:**
-```
-sphp 5.6
-```
-Refresh phpinfo window (Cmd-R)
+**Test version switching:**
 
+```bash
+sphp 8.2
+```
+
+Refresh the phpinfo page (Cmd-R) to verify the version changed.
+
+## Credits
+
+- Original creator: Phil Cook
+- Modified by: Andy Miller
+- M1 Mac support: Vadym Khomakha
+
+## License
+
+MIT License - see script header for details.

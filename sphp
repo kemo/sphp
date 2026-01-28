@@ -1,140 +1,473 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Shell script for switching between Brew-installed PHP versions
+#
+# Copyright (c) 2023 Andy Miller
+# Released under the MIT License
+#
 # Creator: Phil Cook
 # Modified: Andy Miller
 # Adopted for M1 Macs: Vadym Khomakha
 # Release date: July 24, 2021
-# Version: 1.02
+# Version: 2.00
+#
+# More information: https://github.com/rhukster/sphp.sh
 
-osx_major_version=$(sw_vers -productVersion | cut -d. -f1)
-osx_minor_version=$(sw_vers -productVersion | cut -d. -f2)
-osx_patch_version=$(sw_vers -productVersion | cut -d. -f3)
-osx_patch_version=${osx_patch_version:-0}
-osx_version=$((${osx_major_version} * 10000 + ${osx_minor_version} * 100 + ${osx_patch_version}))
+set -euo pipefail
 
-if [[ `uname -m` == 'arm64' ]]; then
-  architecture="M1"
-else 
-  architecture="Intel"
-fi
+script_version=2.0.0
 
-echo "Architecture:  "$architecture
+# Supported PHP versions
+brew_array=("5.6" "7.0" "7.1" "7.2" "7.3" "7.4" "8.0" "8.1" "8.2" "8.3" "8.4" "8.5")
 
-brew_prefix=$(brew --prefix | sed 's#/#\\\/#g')
-brew_path=$(brew --prefix)
-
-brew_array=("5.6","7.0","7.1","7.2","7.3","7.4","8.0","8.1","8.2","8.3")
-php_array=("php@5.6" "php@7.0" "php@7.1" "php@7.2" "php@7.3" "php@7.4" "php@8.0" "php@8.1" "php@8.2" "php@8.3")
-php_installed_array=()
-php_version="php@$1"
-php_opt_path="$brew_prefix\/opt\/"
-
-php5_module="php5_module"
-apache_php5_lib_path="\/lib\/httpd\/modules\/libphp5.so"
-php7_module="php7_module"
-apache_php7_lib_path="\/lib\/httpd\/modules\/libphp7.so"
-php8_module="php_module"
-apache_php8_lib_path="\/lib\/httpd\/modules\/libphp.so"
-
-native_osx_php_apache_module="LoadModule ${php5_module} libexec\/apache2\/libphp5.so"
-if [ "${osx_version}" -ge "101300" ]; then
-    native_osx_php_apache_module="LoadModule ${php7_module} libexec\/apache2\/libphp7.so"
-fi
-
-# Has the user submitted a version required
-if [[ -z "$1" ]]; then
-    echo "usage: sphp version [-s|-s=*] [-c=*]"
-    echo
-    echo "    version    one of:" ${brew_array[@]}
-    echo
-    exit
-fi
-
-php_module="$php5_module"
-apache_php_lib_path="$apache_php5_lib_path"
-
-
-simple_php_version=$(echo "$php_version" | sed 's/^php@//' | sed 's/\.//')
-if [[ simple_php_version -ge 70 && simple_php_version -lt 80 ]]; then
-    php_module="$php7_module"
-    apache_php_lib_path="$apache_php7_lib_path"
-elif [[ simple_php_version -ge 80 ]]; then  
-    php_module="$php8_module"
-    apache_php_lib_path="$apache_php8_lib_path"
-fi
-
+# Apache configuration switch: 1=enabled, 0=disabled
 apache_change=1
-apache_conf_path="$brew_path/etc/httpd/httpd.conf"
 
-apache_php_mod_path="$php_opt_path$php_version$apache_php_lib_path"
+# Reference values for PHP module and Apache library path per major PHP version
+# Uses functions instead of associative arrays for Bash 3.2 compatibility
 
-# What versions of php are installed via brew
-for i in ${php_array[*]}; do
-    version=$(echo "$i" | sed 's/^php@//')
-    if [[ -d "$brew_path/etc/php/$version" ]]; then
-        php_installed_array+=("$i")
+# Options
+dry_run=0
+verbose=0
+skip_apache=0
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# ----------------------------------------------------------------------------
+# Helper functions
+#
+
+# Print colored output
+print_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+print_verbose() {
+    if [[ $verbose -eq 1 ]]; then
+        echo -e "${CYAN}[DEBUG]${NC} $1"
+    fi
+}
+
+print_dry_run() {
+    echo -e "${YELLOW}[DRY-RUN]${NC} $1"
+}
+
+# Returns the following values based on PHP version
+# - PHP module
+# - Apache PHP Library path
+#
+# Parameters:
+# $1 = PHP version ('X.Y' or 'php@X.Y')
+#
+# Example usage (to assign 'module' and 'libpath' variables):
+# read -r module libpath < <(apache_module_and_lib "<PHP version>")
+apache_module_and_lib() {
+    # Remove 'php@' prefix if present
+    local version="${1#php@}"
+    # Keep only major version number (remove first '.' and everything after)
+    local major="${version%%.*}"
+
+    # Lookup values based on major PHP version number
+    local php_module apache_lib_path
+    case "$major" in
+        5)
+            php_module="php5_module"
+            apache_lib_path="/lib/httpd/modules/libphp5.so"
+            ;;
+        7)
+            php_module="php7_module"
+            apache_lib_path="/lib/httpd/modules/libphp7.so"
+            ;;
+        8)
+            php_module="php_module"
+            apache_lib_path="/lib/httpd/modules/libphp.so"
+            ;;
+        *)
+            php_module="php_module"
+            apache_lib_path="/lib/httpd/modules/libphp.so"
+            ;;
+    esac
+    echo "$php_module" "$apache_lib_path"
+}
+
+# Make sure we call macOS native grep.
+# This avoids warnings when GNU grep >=3.8+ is installed (see #1)
+grep() {
+    /usr/bin/grep "$@"
+}
+
+# Escaping a path for use in shell command
+# Adds a '\' before '/'
+sed_escape() {
+    local string="$*"
+    echo "${string//\//\\/}"
+}
+
+# Get currently active PHP version
+get_current_php_version() {
+    local homebrew_path
+    homebrew_path=$(brew --prefix 2>/dev/null) || {
+        echo "unknown"
+        return
+    }
+
+    local php_bin="$homebrew_path/bin/php"
+    if [[ -L "$php_bin" ]]; then
+        # Follow the symlink to determine which PHP version is linked
+        local target
+        target=$(readlink "$php_bin" 2>/dev/null)
+        # Extract version from path like ../Cellar/php@8.1/8.1.x/bin/php or ../Cellar/php/8.4.x/bin/php
+        if [[ "$target" =~ php@([0-9]+\.[0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        elif [[ "$target" =~ php/([0-9]+)\.([0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+            return
+        fi
+    fi
+
+    # Fallback: use the Homebrew php binary directly (not shell PATH)
+    if [[ -x "$php_bin" ]]; then
+        "$php_bin" -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;' 2>/dev/null || echo "unknown"
+    else
+        echo "none"
+    fi
+}
+
+# Get list of installed PHP versions via Homebrew
+get_installed_php_versions() {
+    local homebrew_path
+    homebrew_path=$(brew --prefix 2>/dev/null) || return 1
+
+    local installed=()
+    for version in "${brew_array[@]}"; do
+        if [[ -d "$homebrew_path/etc/php/$version" ]]; then
+            installed+=("$version")
+        fi
+    done
+    echo "${installed[@]}"
+}
+
+# Display help
+show_help() {
+    echo -e "${GREEN}PHP Switcher${NC} - v$script_version"
+    echo
+    echo "Switch between Brew-installed PHP versions."
+    echo
+    echo -e "${YELLOW}Usage:${NC}"
+    echo "    $(basename "$0") <version> [options]"
+    echo "    $(basename "$0") --list"
+    echo
+    echo -e "${YELLOW}Arguments:${NC}"
+    echo "    version      PHP version to switch to: ${brew_array[*]}"
+    echo
+    echo -e "${YELLOW}Options:${NC}"
+    echo "    -s, --skip-apache    Skip Apache configuration changes"
+    echo "    -n, --dry-run        Show what would be done without making changes"
+    echo "    -v, --verbose        Enable verbose output"
+    echo "    -l, --list           List installed PHP versions and exit"
+    echo "    -c, --current        Show current PHP version and exit"
+    echo "    -h, --help           Show this help message"
+    echo
+    echo -e "${YELLOW}Examples:${NC}"
+    echo "    $(basename "$0") 8.3              Switch to PHP 8.3"
+    echo "    $(basename "$0") 8.2 --skip-apache   Switch PHP without Apache changes"
+    echo "    $(basename "$0") 8.1 --dry-run   Preview switch to PHP 8.1"
+    echo "    $(basename "$0") --list          List installed PHP versions"
+    echo
+}
+
+# List installed PHP versions
+list_installed_versions() {
+    local current_version
+    current_version=$(get_current_php_version)
+
+    echo -e "${GREEN}Installed PHP versions:${NC}"
+    echo
+
+    local installed
+    installed=$(get_installed_php_versions)
+
+    if [[ -z "$installed" ]]; then
+        print_warning "No PHP versions found installed via Homebrew"
+        return 1
+    fi
+
+    for version in $installed; do
+        if [[ "$version" == "$current_version" ]]; then
+            echo -e "  ${GREEN}* $version${NC} (active)"
+        else
+            echo "    $version"
+        fi
+    done
+    echo
+}
+
+# Show current PHP version
+show_current_version() {
+    local current_version
+    current_version=$(get_current_php_version)
+
+    if [[ "$current_version" == "none" ]]; then
+        print_warning "No PHP version currently active"
+    else
+        echo -e "Current PHP version: ${GREEN}$current_version${NC}"
+        if command -v php &> /dev/null; then
+            php -v | head -1
+        fi
+    fi
+}
+
+# Execute command with dry-run support
+run_cmd() {
+    if [[ $dry_run -eq 1 ]]; then
+        print_dry_run "$*"
+        return 0
+    else
+        print_verbose "Executing: $*"
+        "$@"
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# Main script
+#
+
+# Parse command line arguments
+target_version=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -l|--list)
+            list_installed_versions
+            exit 0
+            ;;
+        -c|--current)
+            show_current_version
+            exit 0
+            ;;
+        -s|--skip-apache)
+            skip_apache=1
+            shift
+            ;;
+        -n|--dry-run)
+            dry_run=1
+            shift
+            ;;
+        -v|--verbose)
+            verbose=1
+            shift
+            ;;
+        -*)
+            print_error "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            if [[ -z "$target_version" ]]; then
+                target_version="$1"
+            else
+                print_error "Multiple versions specified"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Display help if no version specified
+if [[ -z "$target_version" ]]; then
+    show_help
+    exit 0
+fi
+
+# Override apache_change if skip flag is set
+if [[ $skip_apache -eq 1 ]]; then
+    apache_change=0
+fi
+
+php_version="php@$target_version"
+
+# Check that brew is available
+if ! command -v brew &> /dev/null; then
+    print_error "Homebrew is not installed or not in PATH"
+    exit 1
+fi
+
+homebrew_path=$(brew --prefix)
+apache_conf_path="$homebrew_path/etc/httpd/httpd.conf"
+php_opt_path="$homebrew_path/opt/"
+
+print_verbose "Homebrew path: $homebrew_path"
+print_verbose "Apache config: $apache_conf_path"
+print_verbose "PHP opt path: $php_opt_path"
+
+# Build array of installed PHP versions
+php_installed_array=()
+for version in "${brew_array[@]}"; do
+    if [[ -d "$homebrew_path/etc/php/$version" ]]; then
+        php_installed_array+=("$version")
     fi
 done
 
-echo $php_version
+print_verbose "Installed PHP versions: ${php_installed_array[*]}"
 
 # Check that the requested version is supported
-if [[ " ${php_array[*]} " == *"$php_version"* ]]; then
-    # Check that the requested version is installed
-    if [[ " ${php_installed_array[*]} " == *"$php_version"* ]]; then
+if [[ ! " ${brew_array[*]} " == *" $target_version "* ]]; then
+    print_error "Unknown version of PHP: $target_version"
+    echo "Supported versions: ${brew_array[*]}"
+    exit 1
+fi
 
-        # Switch Shell
-        echo "Switching to $php_version"
-        echo "Switching your shell"
-        for i in ${php_installed_array[@]}; do
-            brew unlink $i
-        done
-        brew link --force "$php_version"
+# Check that the requested version is installed
+if [[ ! " ${php_installed_array[*]} " == *" $target_version "* ]]; then
+    print_error "$php_version is not installed via Homebrew"
+    echo "Install it by running: brew install $php_version"
+    exit 1
+fi
 
-        # Switch apache
-        if [[ $apache_change -eq 1 ]]; then
-            echo "Switching your apache conf"
+# Show current version before switching
+current_version=$(get_current_php_version)
+if [[ "$current_version" == "$target_version" ]]; then
+    print_warning "Already running PHP $target_version"
+    php -v
+    exit 0
+fi
 
-            for j in ${php_installed_array[@]}; do
-                loop_php_module="$php5_module"
-                loop_apache_php_lib_path="$apache_php5_lib_path"
-                loop_php_version=$(echo "$j" | sed 's/^php@//' | sed 's/\.//')
-                if [[ loop_php_version -ge 70 && loop_php_version -lt 80 ]]; then
-                    loop_php_module="$php7_module"
-                    loop_apache_php_lib_path="$apache_php7_lib_path"
-                elif [[ loop_php_version -ge 80 ]]; then  
-                    loop_php_module="$php8_module"
-                    loop_apache_php_lib_path="$apache_php8_lib_path" 
-                fi
-                apache_module_string="LoadModule $loop_php_module $php_opt_path$j$loop_apache_php_lib_path"
-                comment_apache_module_string="#$apache_module_string"
+echo
+if [[ $dry_run -eq 1 ]]; then
+    print_info "Dry-run mode - no changes will be made"
+    echo
+fi
 
-                # If apache module string within apache conf
-                if grep -q "$apache_module_string" "$apache_conf_path"; then
-                    # If apache module string not commented out already
-                    if ! grep -q "$comment_apache_module_string" "$apache_conf_path"; then
-                        sed -i.bak "s/$apache_module_string/$comment_apache_module_string/g" $apache_conf_path
-                    fi
-                # Else the string for the php module is not in the apache config then add it
-                else
-                    sed -i.bak "/$native_osx_php_apache_module/a\\
-$comment_apache_module_string\\
-" $apache_conf_path
-                fi
-            done
-            sed -i.bak "s/\#LoadModule $php_module $apache_php_mod_path/LoadModule $php_module $apache_php_mod_path/g" $apache_conf_path
-            echo "Restarting apache"
-            brew services stop httpd
-            brew services start httpd
+print_info "Switching from PHP $current_version to $target_version"
+echo
+
+# Switch Shell
+print_info "Unlinking other PHP versions..."
+if [[ $dry_run -eq 1 ]]; then
+    for i in "${php_installed_array[@]}"; do
+        print_dry_run "brew unlink php@$i"
+    done
+else
+    pids=()
+    for i in "${php_installed_array[@]}"; do
+        brew unlink "php@$i" &>/dev/null &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null
+    done
+    print_verbose "Unlinked ${#php_installed_array[@]} PHP versions in parallel"
+fi
+
+print_info "Linking $php_version..."
+if ! run_cmd brew link --force "$php_version"; then
+    print_error "Failed to link $php_version"
+    exit 1
+fi
+print_success "Shell PHP switched to $php_version"
+
+# Switch Apache
+if [[ $apache_change -eq 1 ]]; then
+    echo
+    print_info "Updating Apache configuration..."
+
+    # Check if Apache config exists
+    if [[ ! -f "$apache_conf_path" ]]; then
+        print_warning "Apache config not found at $apache_conf_path"
+        print_warning "Skipping Apache configuration"
+    else
+        # Backup apache config file
+        if [[ $dry_run -eq 0 ]]; then
+            cp "$apache_conf_path" "$apache_conf_path.bak-sphp"
+            print_verbose "Created backup: $apache_conf_path.bak-sphp"
+        else
+            print_dry_run "cp $apache_conf_path $apache_conf_path.bak-sphp"
         fi
 
-	echo ""
-        php -v
-        echo ""
+        # Disable module for any PHP version other than target
+        for version in "${php_installed_array[@]}"; do
+            # Get PHP Module and Apache lib path for PHP version
+            read -r loop_php_module loop_apache_php_lib_path < <(apache_module_and_lib "$version")
 
-        echo "All done!"
-    else
-        echo "Sorry, but $php_version is not installed via brew. Install by running: brew install $php_version"
+            loop_php_version="php@$version"
+            apache_module_string="LoadModule $loop_php_module $php_opt_path$loop_php_version$loop_apache_php_lib_path"
+
+            if [[ $dry_run -eq 0 ]]; then
+                # If apache module string within apache conf
+                if grep -q "$apache_module_string" "$apache_conf_path"; then
+                    # Comment out the Apache module string if not done already
+                    sed -i.bak "/^$(sed_escape "$apache_module_string")/s/^.*\$/#&/" "$apache_conf_path"
+                    print_verbose "Commented out: $apache_module_string"
+                else
+                    # The string for the php module is not in the Apache config
+                    # Add it after rewrite_module, which is expected to be the last
+                    # module in the list
+                    sed -i.bak "/LoadModule rewrite_module/a\\
+#$apache_module_string\\
+" "$apache_conf_path"
+                    print_verbose "Added (commented): $apache_module_string"
+                fi
+            else
+                print_dry_run "Comment/add module string for php@$version"
+            fi
+        done
+
+        # Enable target PHP version
+        read -r php_module apache_php_lib_path < <(apache_module_and_lib "$target_version")
+        apache_php_mod_path="$php_opt_path$php_version$apache_php_lib_path"
+
+        if [[ $dry_run -eq 0 ]]; then
+            sed -i.bak -E "s/^#(LoadModule $php_module $(sed_escape "$apache_php_mod_path"))/\1/" "$apache_conf_path"
+            print_verbose "Enabled: LoadModule $php_module $apache_php_mod_path"
+
+            # Cleanup sed backup file
+            [[ -e "${apache_conf_path}.bak" ]] && rm "${apache_conf_path}.bak"
+        else
+            print_dry_run "Enable LoadModule $php_module $apache_php_mod_path"
+        fi
+
+        print_success "Apache configuration updated"
+
+        # Restart Apache
+        print_info "Restarting Apache..."
+        if run_cmd brew services restart httpd; then
+            print_success "Apache restarted"
+        else
+            print_warning "Failed to restart Apache - you may need to restart it manually"
+        fi
     fi
 else
-    echo "Unknown version of PHP. PHP Switcher can only handle arguments of:" ${brew_array[@]}
+    print_info "Skipping Apache configuration (--skip-apache)"
 fi
+
+echo
+if [[ $dry_run -eq 0 ]]; then
+    print_success "Switched to PHP $target_version"
+    echo
+    php -v
+else
+    print_info "Dry-run complete - no changes were made"
+fi
+echo

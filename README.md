@@ -82,7 +82,7 @@ Add the PHP repository:
 brew tap shivammathur/php
 ```
 
-Install the PHP versions you need:
+Install the PHP versions you need (see [Troubleshooting](#troubleshooting) if you hit tap conflicts or dependency errors):
 
 ```bash
 brew install shivammathur/php/php@5.6
@@ -197,6 +197,42 @@ sphp 8.2
 ```
 
 Refresh the phpinfo page (Cmd-R) to verify the version changed.
+
+## Troubleshooting
+
+### `sudo apachectl stop` returns "Unload failed: 5: Input/output error"
+
+This is normal on newer versions of macOS. It means the built-in Apache service is already stopped or managed differently by the system. You can safely ignore this error and continue with the setup.
+
+### `brew install shivammathur/php/php@X.X` fails with tap conflict
+
+```
+Error: php was installed from the homebrew/core tap
+but you are trying to install it from the shivammathur/php tap.
+```
+
+You must uninstall the core tap version first:
+
+```bash
+brew uninstall php
+```
+
+If that fails because other formulae depend on it (e.g. `composer`), force the removal and reinstall dependents afterward:
+
+```bash
+brew uninstall --ignore-dependencies php
+brew install shivammathur/php/php@8.4   # or whichever version you need
+brew reinstall composer
+```
+
+### `sphp` reports "Unknown version of PHP"
+
+You may be running an outdated version of the `sphp` script. Reinstall it:
+
+```bash
+curl -L https://raw.githubusercontent.com/rhukster/sphp.sh/main/sphp > "$(brew --prefix)/bin/sphp"
+chmod +x "$(brew --prefix)/bin/sphp"
+```
 
 ## Credits
 
